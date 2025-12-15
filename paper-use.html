@@ -77,26 +77,37 @@ let connection;
 let keypair;
 let scanner;
 
+// ---- Explicit RPC endpoints (NO WebSockets) ----
+const RPC_ENDPOINTS = {
+  "mainnet-beta": "https://api.mainnet-beta.solana.com",
+  "devnet": "https://api.devnet.solana.com",
+  "testnet": "https://api.testnet.solana.com"
+};
+
 function getConnection() {
+  const net = document.getElementById('network').value;
   return new solanaWeb3.Connection(
-    solanaWeb3.clusterApiUrl(
-      document.getElementById('network').value
-    ),
-    'confirmed'
+    RPC_ENDPOINTS[net],
+    {
+      commitment: "confirmed",
+      wsEndpoint: null // 🚨 disable WebSockets
+    }
   );
 }
 
-// ---- QR Scanner ----
+// ---- QR Scanner (lazy start) ----
 scanner = new Html5Qrcode("reader");
 
-scanner.start(
-  { facingMode: "environment" },
-  { fps: 10, qrbox: 200 },
-  text => {
-    document.getElementById('privkey').value = text;
-    scanner.stop();
-  }
-);
+function scanPrivateKey() {
+  scanner.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 200 },
+    text => {
+      document.getElementById('privkey').value = text;
+      scanner.stop();
+    }
+  );
+}
 
 // ---- Account loading ----
 function loadAccount() {
@@ -108,13 +119,14 @@ function loadAccount() {
     connection = getConnection();
 
     refreshInfo();
-  } catch {
+  } catch (e) {
     alert("Invalid private key");
   }
 }
 
 async function refreshInfo() {
   const pub = keypair.publicKey;
+
   const balance = await connection.getBalance(pub);
   const info = await connection.getAccountInfo(pub);
 
@@ -150,6 +162,7 @@ async function sendSol() {
     const to = new solanaWeb3.PublicKey(
       document.getElementById('to').value.trim()
     );
+
     const amount =
       parseFloat(document.getElementById('amount').value) *
       solanaWeb3.LAMPORTS_PER_SOL;
@@ -178,6 +191,7 @@ async function sendSol() {
   }
 }
 </script>
+
 
 </body>
 </html>
