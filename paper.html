@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Solana Paper Wallet Generator</title>
+
+
+<script src="./solana-web3.iife.js"></script>
+<script src="./qrcode.js"></script>
+<script src="./jspdf.js"></script>
+
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  padding: 20px;
+  max-width: 600px;
+}
+button {
+  padding: 8px 14px;
+}
+.progress {
+  height: 10px;
+  background: #ddd;
+  margin-top: 6px;
+}
+.progress-bar {
+  height: 10px;
+  width: 0%;
+  background: #4caf50;
+}
+small {
+  color: #555;
+}
+</style>
+</head>
+<body>
+
+<h2>Solana Paper Wallet Generator</h2>
+
+<p>Move your mouse randomly until enough entropy is collected.</p>
+
+<div class="progress">
+  <div class="progress-bar" id="bar"></div>
+</div>
+<small id="entropyText">Entropy: 0 / 4096</small>
+
+<br><br>
+
+<label>
+Wallet count:
+<input id="count" type="number" value="1" min="1" max="20">
+</label>
+
+<br><br>
+<button id="generateBtn" disabled>Generate PDF</button>
+
+<script>
+const REQUIRED_ENTROPY = 4096;
+let entropyPool = [];
+
+document.addEventListener('mousemove', e => {
+  if (entropyPool.length >= REQUIRED_ENTROPY) return;
+
+  entropyPool.push(
+    e.clientX & 255,
+    e.clientY & 255,
+    e.movementX & 255,
+    e.movementY & 255,
+    Date.now() & 255
+  );
+
+  const percent = Math.min(100, (entropyPool.length / REQUIRED_ENTROPY) * 100);
+  document.getElementById('bar').style.width = percent + '%';
+  document.getElementById('entropyText').innerText =
+    `Entropy: ${entropyPool.length} / ${REQUIRED_ENTROPY}`;
+
+  if (entropyPool.length >= REQUIRED_ENTROPY) {
+    document.getElementById('generateBtn').disabled = false;
+    document.getElementById('entropyText').innerText += ' ✓';
+  }
+});
+
+// ---- Secure RNG mixing mouse + OS entropy ----
+function getSecureRandomBytes(len) {
+  const osBytes = new Uint8Array(len);
+  crypto.getRandomValues(osBytes);
+
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    const m = entropyPool[Math.floor(Math.random() * entropyPool.length)];
+    out[i] = osBytes[i] ^ m;
+  }
+  return out;
+}
+
+function makeQRCanvas(text, moduleSize = 4, margin = 8) {
+  const qr = qrcode(0, 'M'); // auto size, error correction M
+  qr.addData(text);
+  qr.make();
+
+  const count = qr.getModuleCount();
+  const size = count * moduleSize + margin * 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < count; r++) {
+    for (let c = 0; c < count; c++) {
+      if (qr.isDark(r, c)) {
+        ctx.fillRect(
+          margin + c * moduleSize,
+          margin + r * moduleSize,
+          moduleSize,
+          moduleSize
+        );
+      }
+    }
+  }
+
+  return canvas;
+}
+
+document.getElementById('generateBtn').onclick = async () => {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF();
+  pdf.setFontSize(8);
+
+  const count = parseInt(document.getElementById('count').value, 10);
+  let y = 15;
+
+  const QR_SIZE = 26;
+  const BOX_X = 10;
+  const BOX_W = 190;
+
+  const ADDR_QR_X = BOX_X + 8;
+  const PRIV_QR_X = BOX_X + BOX_W - QR_SIZE - 8;
+
+
+for (let i = 0; i < count; i++) {
+  if (y > 250) {
+    pdf.addPage();
+    y = 15;
+  }
+
+  // ---- Layout constants ----
+  const QR_SIZE = 26;
+  const BOX_X = 10;
+  const BOX_W = 190;
+  const BOX_H = 42;
+
+  const ADDR_QR_X = BOX_X + 8;
+  const PRIV_QR_X = BOX_X + BOX_W - QR_SIZE - 8;
+
+  const TEXT_X = ADDR_QR_X + QR_SIZE + 6;
+  const TEXT_W = PRIV_QR_X - TEXT_X - 6;
+
+  // ---- Wallet box ----
+  pdf.rect(BOX_X, y - 5, BOX_W, BOX_H);
+  pdf.setFontSize(8);
+  pdf.text(`Wallet #${i + 1}`, BOX_X + 2, y);
+
+  // ---- Generate wallet ----
+  const seed = getSecureRandomBytes(32);
+  const kp = solanaWeb3.Keypair.fromSeed(seed);
+
+  const address = kp.publicKey.toBase58();
+  const priv = btoa(String.fromCharCode(...kp.secretKey));
+
+  // ---- Compact text ----
+  pdf.setFontSize(7);
+
+  pdf.text('Addr:', TEXT_X, y + 12);
+  pdf.text(address, TEXT_X + 14, y + 12, {
+    maxWidth: TEXT_W - 14
+  });
+
+  pdf.text('Priv:', TEXT_X, y + 24);
+  pdf.text(priv, TEXT_X + 14, y + 24, {
+    maxWidth: TEXT_W - 14
+  });
+
+  pdf.setFontSize(8);
+
+  // ---- QR codes ----
+  const addrQR = makeQRCanvas(address);
+  const privQR = makeQRCanvas(priv);
+
+  pdf.addImage(
+    addrQR.toDataURL('image/png'),
+    'PNG',
+    ADDR_QR_X,
+    y + 6,
+    QR_SIZE,
+    QR_SIZE
+  );
+
+  pdf.addImage(
+    privQR.toDataURL('image/png'),
+    'PNG',
+    PRIV_QR_X,
+    y + 6,
+    QR_SIZE,
+    QR_SIZE
+  );
+
+  // ---- QR labels ----
+  pdf.setFontSize(6);
+  pdf.text('Address', ADDR_QR_X + 2, y + 36);
+  pdf.text('Private', PRIV_QR_X + 3, y + 36);
+  pdf.setFontSize(8);
+
+  y += BOX_H + 10;
+}
+
+
+  pdf.save('solana-paper-wallets.pdf');
+};
+</script>
+
+</body>
+</html>
