@@ -46,8 +46,7 @@ pre {
   color: blue;
 }
 #reader {
-  width: 100%;
-  height: 300px;
+  display: none;
 }
 .button-group {
   display: flex;
@@ -134,12 +133,19 @@ let currentScanMode = null;
 let scannedTransactionData = null;
 
 function getConnection() {
-  return new solanaWeb3.Connection(
-    solanaWeb3.clusterApiUrl(
-      document.getElementById('network').value
-    ),
-    'confirmed'
-  );
+  const network = document.getElementById('network').value;
+  let endpoint;
+  
+  // Use custom RPC endpoints to avoid rate limiting
+  if (network === 'mainnet-beta') {
+    endpoint = 'https://api.mainnet-beta.solana.com';
+  } else if (network === 'devnet') {
+    endpoint = solanaWeb3.clusterApiUrl(network);
+  } else {
+    endpoint = solanaWeb3.clusterApiUrl(network);
+  }
+  
+  return new solanaWeb3.Connection(endpoint, 'confirmed');
 }
 
 // ---- Message Display ----
@@ -295,16 +301,44 @@ function previewTransaction() {
     }
     
     const to = new solanaWeb3.PublicKey(toStr);
-    const amount = parseFloat(amountStr) * solanaWeb3.LAMPORTS_PER_SOL;
+    const amountSol = parseFloat(amountStr);
+    const amount = amountSol * solanaWeb3.LAMPORTS_PER_SOL;
     
-    const preview = `TO: ${to.toBase58()}
+    // Estimate transaction fee (standard transfer is ~5000 lamports)
+    const estimatedFee = 5000;
+    const estimatedFeeSol = estimatedFee / solanaWeb3.LAMPORTS_PER_SOL;
+    const totalCost = amount + estimatedFee;
+    
+    let warningText = '';
+    
+    // Get current balance to warn if insufficient
+    (async () => {
+      try {
+        const balance = await connection.getBalance(keypair.publicKey);
+        
+        if (totalCost > balance) {
+          const maxSendable = Math.max(0, balance - estimatedFee);
+          const maxSol = (maxSendable / solanaWeb3.LAMPORTS_PER_SOL).toFixed(6);
+          warningText = `\nWARNING: Insufficient balance for full amount + fees.\nMax you can send: ${maxSol} SOL`;
+        } else if (amount + estimatedFee > balance) {
+          warningText = `\nNOTE: Transaction fees (~${estimatedFeeSol.toFixed(6)} SOL) will be deducted from your balance.`;
+        }
+      } catch (e) {
+        console.error('Error checking balance:', e);
+      }
+      
+      const preview = `TO: ${to.toBase58()}
 AMOUNT: ${amountStr} SOL (${amount} lamports)
 FROM: ${keypair.publicKey.toBase58()}
 
+Estimated Fee: ${estimatedFeeSol.toFixed(6)} SOL (${estimatedFee} lamports)
+Total Cost: ${(totalCost / solanaWeb3.LAMPORTS_PER_SOL).toFixed(6)} SOL${warningText}
+
 Review and confirm before sending.`;
-    
-    document.getElementById('previewContent').textContent = preview;
-    document.getElementById('txPreview').style.display = 'block';
+      
+      document.getElementById('previewContent').textContent = preview;
+      document.getElementById('txPreview').style.display = 'block';
+    })();
   } catch (e) {
     showStatus('statusMsg', `Invalid transaction data: ${e.message}`, 'error');
   }
