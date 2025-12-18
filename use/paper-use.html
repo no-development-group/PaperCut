@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>Solana QR Tool</title>
 
-<script src="./solana-web3.iife.min.js"></script>
+<script src="./solana-web3.iife.js"></script>
 <script src="./html5-qrcode.min.js"></script>
 
 <style>
@@ -12,6 +12,10 @@ body {
   font-family: monospace;
   padding: 20px;
   max-width: 600px;
+}
+label {
+  display: block;
+  margin-top: 6px;
 }
 input, select, button {
   width: 100%;
@@ -28,8 +32,29 @@ pre {
   padding: 10px;
   margin-top: 10px;
 }
+.status {
+  padding: 8px;
+  margin-top: 8px;
+}
+.status.success {
+  color: green;
+}
+.status.error {
+  color: red;
+}
+.status.info {
+  color: blue;
+}
 #reader {
   width: 100%;
+  height: 300px;
+}
+.button-group {
+  display: flex;
+  gap: 5px;
+}
+.button-group button {
+  flex: 1;
 }
 </style>
 </head>
@@ -37,45 +62,76 @@ pre {
 
 <h2>Solana QR Balance & Transaction Tool</h2>
 
-<label>Network</label>
-<select id="network">
-  <option value="mainnet-beta">Mainnet</option>
-  <option value="devnet">Devnet</option>
-  <option value="testnet">Testnet</option>
-</select>
-
 <div class="box">
-  <strong>Scan Private Key QR</strong>
-  <div id="reader"></div>
+  <label>Network</label>
+  <select id="network">
+    <option value="mainnet-beta">Mainnet</option>
+    <option value="devnet">Devnet</option>
+    <option value="testnet">Testnet</option>
+  </select>
 </div>
 
-<label>Private Key (Base64)</label>
-<input id="privkey">
+<div class="box">
+  <strong>Step 1: Load Private Key</strong>
+  <button onclick="startPrivateKeyScan()">Scan Private Key QR</button>
+  <div id="reader" style="display:none;"></div>
+  <button id="stopScanBtn" style="display:none;" onclick="stopScanning()">Stop Scanning</button>
+  
+  <label>Private Key (Base64)</label>
+  <input id="privkey" placeholder="Or paste base64 private key here">
+  
+  <button onclick="loadAccount()">Load Account</button>
+  <div id="statusMsg"></div>
+</div>
 
-<button onclick="loadAccount()">Load Account</button>
-
-<pre id="info">(no account loaded)</pre>
+<pre id="info" style="display:none;">(no account loaded)</pre>
 
 <hr>
 
-<h3>Send SOL</h3>
+<div class="box" id="sendBox" style="display:none;">
+  <strong>Step 2: Send SOL</strong>
+  <button onclick="startRecipientScan()">Scan Recipient QR</button>
+  
+  <label>Recipient Address</label>
+  <input id="to" placeholder="Paste recipient address here">
+  
+  <label>Amount (SOL)</label>
+  <input id="amount" type="number" step="0.000001" placeholder="0.1">
+  
+  <button onclick="previewTransaction()">Preview Transaction</button>
+  <div id="txPreview" style="display:none;">
+    <pre id="previewContent"></pre>
+    <div class="button-group">
+      <button onclick="sendSol()">Send Transaction</button>
+      <button onclick="cancelTransaction()">Cancel</button>
+    </div>
+  </div>
+  
+  <div id="txlog"></div>
+</div>
 
-<button onclick="scanRecipient()">Scan Recipient QR</button>
+<hr>
 
-<label>Recipient Address</label>
-<input id="to">
-
-<label>Amount (SOL)</label>
-<input id="amount" type="number" step="0.000001">
-
-<button onclick="sendSol()">Send Transaction</button>
-
-<pre id="txlog"></pre>
+<div class="box" id="signBox" style="display:none;">
+  <strong>Step 3: Sign Transaction from QR</strong>
+  <button onclick="startTransactionScan()">Scan Transaction QR</button>
+  <div id="txData" style="display:none;">
+    <label>Scanned Transaction Data</label>
+    <pre id="scannedTxContent"></pre>
+    <div class="button-group">
+      <button onclick="signScannedTransaction()">Sign & Send</button>
+      <button onclick="clearTransactionData()">Clear</button>
+    </div>
+  </div>
+  <div id="signLog"></div>
+</div>
 
 <script>
 let connection;
 let keypair;
 let scanner;
+let currentScanMode = null;
+let scannedTransactionData = null;
 
 function getConnection() {
   return new solanaWeb3.Connection(
@@ -86,65 +142,179 @@ function getConnection() {
   );
 }
 
-// ---- QR Scanner ----
-scanner = new Html5Qrcode("reader");
+// ---- Message Display ----
+function showStatus(elementId, message, type) {
+  const el = document.getElementById(elementId);
+  el.className = `status ${type}`;
+  el.textContent = message;
+  el.style.display = 'block';
+}
 
-scanner.start(
-  { facingMode: "environment" },
-  { fps: 10, qrbox: 200 },
-  text => {
-    document.getElementById('privkey').value = text;
-    scanner.stop();
+function clearStatus(elementId) {
+  const el = document.getElementById(elementId);
+  el.style.display = 'none';
+  el.textContent = '';
+}
+
+// ---- Scanner Management ----
+async function initScanner() {
+  if (!scanner) {
+    scanner = new Html5Qrcode("reader");
   }
-);
+  return scanner;
+}
+
+async function startScanning(mode, callback) {
+  try {
+    currentScanMode = mode;
+    const scannerInstance = await initScanner();
+    const readerDiv = document.getElementById('reader');
+    const stopBtn = document.getElementById('stopScanBtn');
+    
+    readerDiv.style.display = 'block';
+    stopBtn.style.display = 'block';
+    
+    await scannerInstance.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      callback,
+      error => {
+        // Suppress logging
+      }
+    );
+  } catch (e) {
+    alert(`Error starting scanner: ${e.message}`);
+  }
+}
+
+async function stopScanning() {
+  try {
+    if (scanner && scanner.isScanning) {
+      await scanner.stop();
+    }
+    const readerDiv = document.getElementById('reader');
+    const stopBtn = document.getElementById('stopScanBtn');
+    readerDiv.style.display = 'none';
+    stopBtn.style.display = 'none';
+    currentScanMode = null;
+  } catch (e) {
+    console.error('Error stopping scanner:', e);
+  }
+}
+
+// ---- Private Key Scanning ----
+function startPrivateKeyScan() {
+  startScanning('privateKey', (text) => {
+    document.getElementById('privkey').value = text.trim();
+    stopScanning();
+    showStatus('statusMsg', 'Private key QR scanned. Click Load Account to proceed.', 'success');
+  });
+}
 
 // ---- Account loading ----
 function loadAccount() {
   try {
     const priv = document.getElementById('privkey').value.trim();
+    if (!priv) {
+      showStatus('statusMsg', 'Please enter or scan a private key', 'error');
+      return;
+    }
+    
     const bytes = Uint8Array.from(atob(priv), c => c.charCodeAt(0));
-
     keypair = solanaWeb3.Keypair.fromSecretKey(bytes);
     connection = getConnection();
-
+    
     refreshInfo();
-  } catch {
-    alert("Invalid private key");
+    showStatus('statusMsg', 'Account loaded successfully!', 'success');
+    document.getElementById('sendBox').style.display = 'block';
+    document.getElementById('signBox').style.display = 'block';
+  } catch (e) {
+    showStatus('statusMsg', `Invalid private key: ${e.message}`, 'error');
   }
 }
 
 async function refreshInfo() {
-  const pub = keypair.publicKey;
-  const balance = await connection.getBalance(pub);
-  const info = await connection.getAccountInfo(pub);
+  try {
+    const pub = keypair.publicKey;
+    const balance = await connection.getBalance(pub);
+    const info = await connection.getAccountInfo(pub);
 
-  document.getElementById('info').textContent =
+    document.getElementById('info').style.display = 'block';
+    document.getElementById('info').textContent =
 `Address:
 ${pub.toBase58()}
 
 Balance:
-${balance / solanaWeb3.LAMPORTS_PER_SOL} SOL
+${(balance / solanaWeb3.LAMPORTS_PER_SOL).toFixed(6)} SOL
 
 Owner:
 ${info?.owner.toBase58() || "N/A"}
 
 Executable:
 ${info?.executable || false}`;
-}
-
-// ---- Recipient QR ----
-function scanRecipient() {
-  scanner.start(
-    { facingMode: "environment" },
-    { fps: 10, qrbox: 200 },
-    text => {
-      document.getElementById('to').value = text;
-      scanner.stop();
+  } catch (e) {
+    let errMsg = e.message;
+    if (e.message.includes('403')) {
+      errMsg = 'RPC rate limit or access issue. Try devnet or wait before retrying.';
     }
-  );
+    showStatus('statusMsg', `Error: ${errMsg}`, 'error');
+  }
 }
 
-// ---- Send SOL ----
+// ---- Recipient QR Scanning ----
+function startRecipientScan() {
+  startScanning('recipient', (text) => {
+    try {
+      // Validate it's a valid Solana address
+      new solanaWeb3.PublicKey(text.trim());
+      document.getElementById('to').value = text.trim();
+      stopScanning();
+      showStatus('statusMsg', 'Recipient address scanned successfully!', 'success');
+    } catch {
+      alert('Invalid Solana address in QR code');
+      // Continue scanning
+      startScanning('recipient', arguments.callee);
+    }
+  });
+}
+
+// ---- Transaction Preview & Send ----
+function previewTransaction() {
+  try {
+    if (!keypair) {
+      showStatus('statusMsg', 'Load account first', 'error');
+      return;
+    }
+    
+    const toStr = document.getElementById('to').value.trim();
+    const amountStr = document.getElementById('amount').value.trim();
+    
+    if (!toStr || !amountStr) {
+      showStatus('statusMsg', 'Please enter recipient address and amount', 'error');
+      return;
+    }
+    
+    const to = new solanaWeb3.PublicKey(toStr);
+    const amount = parseFloat(amountStr) * solanaWeb3.LAMPORTS_PER_SOL;
+    
+    const preview = `TO: ${to.toBase58()}
+AMOUNT: ${amountStr} SOL (${amount} lamports)
+FROM: ${keypair.publicKey.toBase58()}
+
+Review and confirm before sending.`;
+    
+    document.getElementById('previewContent').textContent = preview;
+    document.getElementById('txPreview').style.display = 'block';
+  } catch (e) {
+    showStatus('statusMsg', `Invalid transaction data: ${e.message}`, 'error');
+  }
+}
+
+function cancelTransaction() {
+  document.getElementById('txPreview').style.display = 'none';
+  clearStatus('txlog');
+}
+
 async function sendSol() {
   try {
     const to = new solanaWeb3.PublicKey(
@@ -153,6 +323,8 @@ async function sendSol() {
     const amount =
       parseFloat(document.getElementById('amount').value) *
       solanaWeb3.LAMPORTS_PER_SOL;
+
+    showStatus('txlog', 'Sending transaction...', 'info');
 
     const tx = new solanaWeb3.Transaction().add(
       solanaWeb3.SystemProgram.transfer({
@@ -168,13 +340,91 @@ async function sendSol() {
       [keypair]
     );
 
-    document.getElementById('txlog').textContent =
-      `Transaction sent:\n${sig}`;
-
+    showStatus('txlog', `Transaction sent!\n${sig}`, 'success');
+    document.getElementById('txPreview').style.display = 'none';
+    document.getElementById('amount').value = '';
+    document.getElementById('to').value = '';
+    
     refreshInfo();
   } catch (e) {
-    document.getElementById('txlog').textContent =
-      `Error:\n${e.message}`;
+    let errMsg = e.message;
+    if (e.message.includes('403')) {
+      errMsg = 'RPC rate limit or access issue. Try devnet or wait before retrying.';
+    }
+    showStatus('txlog', `Error: ${errMsg}`, 'error');
+  }
+}
+
+// ---- Transaction Signing from QR ----
+function startTransactionScan() {
+  startScanning('transaction', (text) => {
+    try {
+      scannedTransactionData = text.trim();
+      document.getElementById('scannedTxContent').textContent = scannedTransactionData;
+      document.getElementById('txData').style.display = 'block';
+      stopScanning();
+      showStatus('signLog', 'Transaction QR scanned. Review and sign.', 'success');
+    } catch (e) {
+      alert(`Error processing transaction QR: ${e.message}`);
+      startScanning('transaction', arguments.callee);
+    }
+  });
+}
+
+function clearTransactionData() {
+  scannedTransactionData = null;
+  document.getElementById('txData').style.display = 'none';
+  document.getElementById('scannedTxContent').textContent = '';
+  clearStatus('signLog');
+}
+
+async function signScannedTransaction() {
+  try {
+    if (!keypair) {
+      showStatus('signLog', 'Load account first', 'error');
+      return;
+    }
+    
+    if (!scannedTransactionData) {
+      showStatus('signLog', 'No transaction data scanned', 'error');
+      return;
+    }
+    
+    showStatus('signLog', 'Parsing and signing transaction...', 'info');
+    
+    // Try to parse as base64-encoded transaction
+    let tx;
+    try {
+      const txBuffer = Buffer.from(scannedTransactionData, 'base64');
+      tx = solanaWeb3.Transaction.from(txBuffer);
+    } catch {
+      // Try to parse as JSON
+      const txJson = JSON.parse(scannedTransactionData);
+      // Create transaction from JSON representation
+      tx = solanaWeb3.Transaction.fromJSON(txJson);
+    }
+    
+    // Sign the transaction
+    tx.sign(keypair);
+    
+    // Send the signed transaction
+    const sig = await solanaWeb3.sendRawTransaction(
+      connection,
+      tx.serialize()
+    );
+    
+    // Wait for confirmation
+    await connection.confirmTransaction(sig, 'confirmed');
+    
+    showStatus('signLog', `Transaction signed and sent!\n${sig}`, 'success');
+    clearTransactionData();
+    refreshInfo();
+  } catch (e) {
+    let errMsg = e.message;
+    if (e.message.includes('403')) {
+      errMsg = 'RPC rate limit or access issue. Try devnet or wait before retrying.';
+    }
+    showStatus('signLog', `Error: ${errMsg}`, 'error');
   }
 }
 </script>
