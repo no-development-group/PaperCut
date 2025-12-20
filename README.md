@@ -1,12 +1,46 @@
 # PaperCut
-Paper Solana wallets but differant.
->[!NOTE]
->Feel free to audit / use / fork / etc.
->If you do decide to use parts of this project please leave a star and note in your project.
-# how to test it out (note:never generate real keys while online)
-goto [here](https://github.com/no-development-group/PaperCut/tree/pages) and select what you want to do
-# how it works
-well basicly the boring thingy is like helping the main html thingy and so once the html has all its thingys witch are offline so you dont really need to worry about someone stealing your special solana important thingy but you can create wallets offline if you want extra protection but you should probably send it 5 devenet solana so it isnt an unfunded wallet (i think that is how it works but idk)
-use the other thingy to use the wallet u made before (it is offlien so once you send a transaction you can bin that wallet if you really think that all the official solana js lib is gonna get u).
-# why is this readme so bad
-i am bored and i cant be botherd to vibe code this readme
+
+PaperCut provides simple offline paper wallet tools for Solana. It's a minimal, browser-based set of pages that help you generate, store, and use Solana keys without relying on external servers.
+>[!CAUTION]
+>Safety notice: Never generate or use real (mainnet) private keys while connected to the internet. This project is provided "as-is" and is intended for experimentation and education. Audit and use at your own risk.
+
+---
+
+## Quick links
+
+- Demo / pages branch (for testing): https://github.com/no-development-group/PaperCut/tree/pages
+- Creation tools: `creation/paper.html` (generate keys offline)
+- Usage tools: `use/paper-use.html` (construct & sign transactions using your generated keys)
+
+---
+
+## How to test it (offline)
+
+1. Clone or download the repository.
+2. Open `creation/paper.html` in a browser while offline (open the file directly from disk).
+3. Follow the page instructions to generate a new wallet. You can then print the pdf provided.
+4. Fund the wallet on Devnet before using it in any real interaction (e.g., send ~5 SOL on Devnet so the wallet is not unfunded).
+5. To create and sign a transaction, open `use/paper-use.html` and import your keys.
+
+Note: The pages are intentionally minimal and self-contained; they do not require a server.
+
+---
+
+## How it works (short)
+
+- `creation/` contains tools to generate keypairs and display/print paper wallets offline.
+- `use/` contains tools send and review transactions.
+
+Keep everything offline when you generate or store real keys.
+
+---
+
+## Contributing
+
+Feel free to audit, fork, or submit improvements. If you use parts of this project, a star on the repository is appreciated.
+
+---
+
+## License
+
+MPL - V2
